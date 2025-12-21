@@ -33,7 +33,7 @@ pub fn generate_config(nodes: &[Node], email_to_asn: &HashMap<String, u32>) -> R
 
             // Get ASN from peerlab-gateway mapping
             if let Some(&asn) = email_to_asn.get(email) {
-                config.push_str(&format!("    [ {}, {} ],  # {}\n", ipv4, asn, email));
+                config.push_str(&format!("    ({}, {}),  # {}\n", ipv4, asn, email));
             } else {
                 warn!("No ASN mapping found for user: {}", email);
             }
