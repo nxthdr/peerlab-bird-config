@@ -24,7 +24,7 @@ pub fn generate_config(nodes: &[Node], email_to_asn: &HashMap<String, u32>) -> R
 
     info!("Found {} peerlab user nodes", peerlab_nodes.len());
 
-    // Generate IP → ASN mapping as tuple set
+    // Generate IP → ASN mapping as pair set
     config.push_str("define USER_ASN_MAP = [\n");
 
     for node in &peerlab_nodes {
@@ -33,7 +33,7 @@ pub fn generate_config(nodes: &[Node], email_to_asn: &HashMap<String, u32>) -> R
 
             // Get ASN from peerlab-gateway mapping
             if let Some(&asn) = email_to_asn.get(email) {
-                config.push_str(&format!("    ({}, {}),  # {}\n", ipv4, asn, email));
+                config.push_str(&format!("    [ {}, {} ],  # {}\n", ipv4, asn, email));
             } else {
                 warn!("No ASN mapping found for user: {}", email);
             }
