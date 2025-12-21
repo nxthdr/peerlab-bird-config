@@ -1,6 +1,6 @@
 # Peerlab BIRD Config
 
-A Rust tool that generates BIRD BGP configuration from Headscale API for the nxthdr peerlab infrastructure.
+Generates IP→ASN mappings for BIRD BGP configuration by fetching data from Headscale and peerlab-gateway APIs.
 
 ## Installation
 
@@ -13,94 +13,59 @@ cargo build --release
 ```bash
 # Using environment variables
 export HEADSCALE_API_KEY="your-api-key"
+export PEERLAB_AGENT_KEY="your-agent-key"
 ./peerlab-bird-config
 
 # Or with CLI arguments
-./peerlab-bird-config --headscale-api-key "your-api-key"
+./peerlab-bird-config \
+  --headscale-api-key "your-api-key" \
+  --peerlab-agent-key "your-agent-key" \
+  --output-file /etc/bird/peerlab_users.conf
 ```
+
+## Configuration
+
+The service requires:
+- **Headscale API**: To discover nodes and their Tailscale IPs
+- **Peerlab Gateway API**: To fetch user email→ASN mappings
+
+Default values:
+- Headscale API: `https://headscale.nxthdr.dev/api/v1/node`
+- Peerlab Gateway API: `https://peerlab.nxthdr.dev/service/mappings`
+- Output file: `/etc/bird/peerlab_users.conf`
+
+## Generated Output
+
+The service generates a simple tuple mapping file:
+
+```bird
+# Auto-generated IP to ASN mapping for peerlab
+# Generated at: 2025-12-21T11:10:04.516323+00:00
+
+define USER_ASN_MAP = [
+    (100.64.0.10, 65000),  # matthieu@nxthdr.dev
+    (100.64.0.11, 65001),  # alice@example.com
+];
+```
+
+## Integration with BIRD
+
+Include the generated file in your main BIRD configuration:
+
+```bird
+include "/etc/bird/peerlab_users.conf";
+```
+
+The static BIRD configuration (filters, templates, protocols) should be managed separately in your infrastructure repository.
 
 ## Cron Job Setup
 
-Run every minute to keep configuration up-to-date:
+Run every minute to keep mappings up-to-date:
 
 ```bash
-# Edit crontab
-sudo crontab -e
-
-# Add this line to run every minute
-* * * * * HEADSCALE_API_KEY=your-api-key /usr/local/bin/peerlab-bird-config >> /var/log/peerlab-bird-config.log 2>&1
+# /etc/cron.d/peerlab-bird-config
+* * * * * root HEADSCALE_API_KEY=xxx PEERLAB_AGENT_KEY=yyy /usr/local/bin/peerlab-bird-config >> /var/log/peerlab-bird-config.log 2>&1
 ```
 
-Or create `/etc/cron.d/peerlab-bird-config`:
-
-```
-# Update peerlab BIRD configuration every minute
-* * * * * root HEADSCALE_API_KEY=your-api-key /usr/local/bin/peerlab-bird-config >> /var/log/peerlab-bird-config.log 2>&1
-```
-
-## Generated Configuration
-
-The service generates a BIRD configuration with:
-
-### IP → ASN Mapping Function
-
-```bird
-function get_expected_asn(ip remote_ip) {
-    if (remote_ip = 100.64.0.7) then return 64512;  # matthieu@nxthdr.dev
-    if (remote_ip = 100.64.0.8) then return 64513;  # alice@example.com
-    return 0;  # Unknown IP
-}
-```
-
-### Import Filter with Security Checks
-
-```bird
-filter PeerlabImportFilter {
-    int expected_asn;
-    int actual_asn;
-
-    actual_asn = bgp_path.last;
-    expected_asn = get_expected_asn(from);
-
-    # Reject unknown IPs
-    if (expected_asn = 0) then {
-        print "REJECT: Unknown/unauthorized IP ", from;
-        reject;
-    }
-
-    # Verify ASN matches
-    if (actual_asn != expected_asn) then {
-        print "SECURITY ALERT: ASN mismatch from ", from;
-        reject;
-    }
-
-    # Accept if in private ASN range
-    if (actual_asn >= 64512 && actual_asn <= 65534) then {
-        accept;
-    }
-
-    reject;
-}
-```
-
-## Node Naming Convention
-
-For ASN extraction to work, Headscale nodes must follow the naming pattern:
-
-```
-peerlab-{asn}
-```
-
-Examples:
-- `peerlab-64512` → ASN 64512
-- `peerlab-65534` → ASN 65534
-
-## Integration with Main BIRD Config
-
-In your main BIRD configuration (`/etc/bird/bird.conf`):
-
-```bird
-# Include auto-generated peerlab configuration
-include "/etc/bird/peerlab_generated.conf";
-```
+The service only writes the file if the content has changed (SHA256 hash comparison).
 
