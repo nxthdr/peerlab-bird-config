@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use reqwest;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tracing::debug;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -19,7 +18,7 @@ struct MappingsResponse {
 }
 
 /// Fetch user ASN mappings from peerlab-gateway
-pub async fn fetch_mappings(api_url: &str, agent_key: &str) -> Result<HashMap<String, u32>> {
+pub async fn fetch_mappings(api_url: &str, agent_key: &str) -> Result<Vec<UserMapping>> {
     debug!("Fetching ASN mappings from peerlab-gateway: {}", api_url);
 
     let client = reqwest::Client::new();
@@ -46,20 +45,10 @@ pub async fn fetch_mappings(api_url: &str, agent_key: &str) -> Result<HashMap<St
         .await
         .context("Failed to parse peerlab-gateway API response")?;
 
-    // Build email -> ASN mapping
-    let mut email_to_asn = HashMap::new();
-    for mapping in mappings_response.mappings {
-        if let Some(email) = mapping.email {
-            if !email.is_empty() {
-                email_to_asn.insert(email, mapping.asn);
-            }
-        }
-    }
-
     debug!(
-        "Successfully fetched {} email->ASN mappings",
-        email_to_asn.len()
+        "Successfully fetched {} user mappings",
+        mappings_response.mappings.len()
     );
 
-    Ok(email_to_asn)
+    Ok(mappings_response.mappings)
 }

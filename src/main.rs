@@ -74,16 +74,16 @@ async fn main() -> Result<()> {
     info!("Fetched {} nodes from Headscale", nodes.len());
 
     // Fetch ASN mappings from peerlab-gateway
-    let email_to_asn =
+    let mappings =
         peerlab::fetch_mappings(&args.peerlab_gateway_url, &args.peerlab_agent_key).await?;
 
     info!(
-        "Fetched {} email->ASN mappings from peerlab-gateway",
-        email_to_asn.len()
+        "Fetched {} user mappings from peerlab-gateway",
+        mappings.len()
     );
 
     // Generate BIRD configuration
-    let bird_config = bird::generate_config(&nodes, &email_to_asn)?;
+    let bird_config = bird::generate_config(&nodes, &mappings)?;
 
     // Check if configuration changed
     let changed = bird::write_config_if_changed(&config.output_file, &bird_config)?;

@@ -6,18 +6,25 @@ use std::path::Path;
 use tracing::{debug, info, warn};
 
 use crate::headscale::Node;
+use crate::peerlab::UserMapping;
 
 /// Generate BIRD configuration from Headscale nodes
-pub fn generate_config(nodes: &[Node], email_to_asn: &HashMap<String, u32>) -> Result<String> {
+pub fn generate_config(nodes: &[Node], mappings: &[UserMapping]) -> Result<String> {
     let mut config = String::new();
 
     // Header
-    config.push_str("# Auto-generated IP to ASN mapping for peerlab\n");
+    config.push_str("# Auto-generated IP to ASN and prefix filters for peerlab\n");
     config.push_str(&format!(
         "# Generated at: {}\n",
         chrono::Utc::now().to_rfc3339()
     ));
     config.push_str("\n");
+
+    // Build email -> mapping lookup
+    let email_to_mapping: HashMap<String, &UserMapping> = mappings
+        .iter()
+        .filter_map(|m| m.email.as_ref().map(|e| (e.clone(), m)))
+        .collect();
 
     // Filter peerlab nodes (those with user email)
     let peerlab_nodes: Vec<&Node> = nodes.iter().filter(|n| n.has_user_email()).collect();
@@ -32,10 +39,10 @@ pub fn generate_config(nodes: &[Node], email_to_asn: &HashMap<String, u32>) -> R
             let email = node.user.email.as_ref().unwrap();
 
             // Get ASN from peerlab-gateway mapping
-            if let Some(&asn) = email_to_asn.get(email) {
+            if let Some(mapping) = email_to_mapping.get(email) {
                 config.push_str(&format!(
                     "    if (remote_ip = {}) then return {};  # {}\n",
-                    ipv4, asn, email
+                    ipv4, mapping.asn, email
                 ));
             } else {
                 warn!("No ASN mapping found for user: {}", email);
@@ -44,6 +51,30 @@ pub fn generate_config(nodes: &[Node], email_to_asn: &HashMap<String, u32>) -> R
     }
 
     config.push_str("    return 0;  # Unknown IP\n");
+    config.push_str("}\n\n");
+
+    // Generate prefix set function
+    config.push_str("function get_user_prefixes(ip remote_ip) {\n");
+
+    for node in &peerlab_nodes {
+        if let Some(ipv4) = node.get_ipv4() {
+            let email = node.user.email.as_ref().unwrap();
+
+            if let Some(mapping) = email_to_mapping.get(email) {
+                if !mapping.prefixes.is_empty() {
+                    let prefixes_str = mapping.prefixes.join(", ");
+                    config.push_str(&format!(
+                        "    if (remote_ip = {}) then return [ {} ];  # {}\n",
+                        ipv4, prefixes_str, email
+                    ));
+                } else {
+                    warn!("No prefixes found for user: {}", email);
+                }
+            }
+        }
+    }
+
+    config.push_str("    return [];  # No authorized prefixes\n");
     config.push_str("}\n");
 
     Ok(config)
@@ -83,5 +114,96 @@ pub fn write_config_if_changed(path: &Path, content: &str) -> Result<bool> {
     } else {
         debug!("Configuration unchanged");
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::headscale::{Node, User};
+    use crate::peerlab::UserMapping;
+
+    #[test]
+    fn test_generate_config_with_prefixes() {
+        // Create test nodes
+        let nodes = vec![
+            Node {
+                id: "1".to_string(),
+                machine_key: "key1".to_string(),
+                node_key: "nkey1".to_string(),
+                disco_key: "dkey1".to_string(),
+                ip_addresses: vec!["100.64.0.1".to_string()],
+                name: "node1".to_string(),
+                user: User {
+                    id: "u1".to_string(),
+                    name: "user1".to_string(),
+                    created_at: "2024-01-01T00:00:00Z".to_string(),
+                    display_name: Some("User One".to_string()),
+                    email: Some("user1@example.com".to_string()),
+                    provider_id: None,
+                    provider: None,
+                    profile_pic_url: None,
+                },
+                last_seen: "2024-01-01T00:00:00Z".to_string(),
+                expiry: None,
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+                online: true,
+            },
+            Node {
+                id: "2".to_string(),
+                machine_key: "key2".to_string(),
+                node_key: "nkey2".to_string(),
+                disco_key: "dkey2".to_string(),
+                ip_addresses: vec!["100.64.0.2".to_string()],
+                name: "node2".to_string(),
+                user: User {
+                    id: "u2".to_string(),
+                    name: "user2".to_string(),
+                    created_at: "2024-01-01T00:00:00Z".to_string(),
+                    display_name: Some("User Two".to_string()),
+                    email: Some("user2@example.com".to_string()),
+                    provider_id: None,
+                    provider: None,
+                    profile_pic_url: None,
+                },
+                last_seen: "2024-01-01T00:00:00Z".to_string(),
+                expiry: None,
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+                online: true,
+            },
+        ];
+
+        // Create test mappings
+        let mappings = vec![
+            UserMapping {
+                user_hash: "hash1".to_string(),
+                user_id: "u1".to_string(),
+                email: Some("user1@example.com".to_string()),
+                asn: 65001,
+                prefixes: vec!["2001:db8:1::/48".to_string(), "2001:db8:2::/48".to_string()],
+            },
+            UserMapping {
+                user_hash: "hash2".to_string(),
+                user_id: "u2".to_string(),
+                email: Some("user2@example.com".to_string()),
+                asn: 65002,
+                prefixes: vec!["2001:db8:3::/48".to_string()],
+            },
+        ];
+
+        let config = generate_config(&nodes, &mappings).unwrap();
+
+        // Verify ASN mapping function exists
+        assert!(config.contains("function get_user_asn(ip remote_ip)"));
+        assert!(config.contains("if (remote_ip = 100.64.0.1) then return 65001;"));
+        assert!(config.contains("if (remote_ip = 100.64.0.2) then return 65002;"));
+
+        // Verify prefix set function exists
+        assert!(config.contains("function get_user_prefixes(ip remote_ip)"));
+        assert!(config.contains(
+            "if (remote_ip = 100.64.0.1) then return [ 2001:db8:1::/48, 2001:db8:2::/48 ];"
+        ));
+        assert!(config.contains("if (remote_ip = 100.64.0.2) then return [ 2001:db8:3::/48 ];"));
+        assert!(config.contains("return [];  # No authorized prefixes"));
     }
 }
