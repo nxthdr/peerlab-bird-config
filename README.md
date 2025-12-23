@@ -1,6 +1,6 @@
-# Peerlab BIRD Config
+# PeerLab BIRD Config
 
-Generates IP→ASN mappings for BIRD BGP configuration by fetching data from Headscale and peerlab-gateway APIs.
+Generates IP→ASN mappings for BIRD BGP configuration by fetching data from Headscale and PeeLab Gateway APIs.
 
 ## Installation
 
