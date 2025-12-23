@@ -54,7 +54,7 @@ pub fn generate_config(nodes: &[Node], mappings: &[UserMapping]) -> Result<Strin
     config.push_str("}\n\n");
 
     // Generate prefix set function
-    config.push_str("function get_user_prefixes(ip remote_ip) {\n");
+    config.push_str("function get_user_prefixes(ip remote_ip) -> prefix set {\n");
 
     for node in &peerlab_nodes {
         if let Some(ipv4) = node.get_ipv4() {
@@ -198,8 +198,8 @@ mod tests {
         assert!(config.contains("if (remote_ip = 100.64.0.1) then return 65001;"));
         assert!(config.contains("if (remote_ip = 100.64.0.2) then return 65002;"));
 
-        // Verify prefix set function exists
-        assert!(config.contains("function get_user_prefixes(ip remote_ip)"));
+        // Verify prefix set function exists with explicit return type
+        assert!(config.contains("function get_user_prefixes(ip remote_ip) -> prefix set"));
         assert!(config.contains(
             "if (remote_ip = 100.64.0.1) then return [ 2001:db8:1::/48, 2001:db8:2::/48 ];"
         ));
