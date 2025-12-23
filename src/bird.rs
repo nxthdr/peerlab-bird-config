@@ -13,7 +13,7 @@ pub fn generate_config(nodes: &[Node], mappings: &[UserMapping]) -> Result<Strin
     let mut config = String::new();
 
     // Header
-    config.push_str("# Auto-generated IP to ASN and prefix filters for peerlab\n");
+    config.push_str("# Auto-generated user policy for PeerLab\n");
     config.push_str(&format!(
         "# Generated at: {}\n",
         chrono::Utc::now().to_rfc3339()
@@ -31,50 +31,45 @@ pub fn generate_config(nodes: &[Node], mappings: &[UserMapping]) -> Result<Strin
 
     info!("Found {} peerlab user nodes", peerlab_nodes.len());
 
-    // Generate IP → ASN mapping function
-    config.push_str("function get_user_asn(ip remote_ip) {\n");
+    // Generate unified policy enforcement function
+    config.push_str("function enforce_user_policy(ip remote_ip) {\n");
 
     for node in &peerlab_nodes {
         if let Some(ipv4) = node.get_ipv4() {
             let email = node.user.email.as_ref().unwrap();
 
-            // Get ASN from peerlab-gateway mapping
             if let Some(mapping) = email_to_mapping.get(email) {
+                config.push_str(&format!("    # User: {}\n", email));
+                config.push_str(&format!("    if (remote_ip = {}) then {{\n", ipv4));
+
+                // ASN check
                 config.push_str(&format!(
-                    "    if (remote_ip = {}) then return {};  # {}\n",
-                    ipv4, mapping.asn, email
+                    "        if (bgp_path.last != {}) then reject;\n",
+                    mapping.asn
                 ));
+
+                // Prefix check
+                if !mapping.prefixes.is_empty() {
+                    let prefixes_str = mapping.prefixes.join(", ");
+                    config.push_str(&format!(
+                        "        if !(net ~ [ {} ]) then reject;\n",
+                        prefixes_str
+                    ));
+                } else {
+                    warn!("No prefixes found for user: {}", email);
+                    config.push_str("        reject;  # No authorized prefixes\n");
+                }
+
+                config.push_str("        accept;\n");
+                config.push_str("    }\n\n");
             } else {
                 warn!("No ASN mapping found for user: {}", email);
             }
         }
     }
 
-    config.push_str("    return 0;  # Unknown IP\n");
-    config.push_str("}\n\n");
-
-    // Generate prefix set function
-    config.push_str("function get_user_prefixes(ip remote_ip) -> prefix set {\n");
-
-    for node in &peerlab_nodes {
-        if let Some(ipv4) = node.get_ipv4() {
-            let email = node.user.email.as_ref().unwrap();
-
-            if let Some(mapping) = email_to_mapping.get(email) {
-                if !mapping.prefixes.is_empty() {
-                    let prefixes_str = mapping.prefixes.join(", ");
-                    config.push_str(&format!(
-                        "    if (remote_ip = {}) then return [ {} ];  # {}\n",
-                        ipv4, prefixes_str, email
-                    ));
-                } else {
-                    warn!("No prefixes found for user: {}", email);
-                }
-            }
-        }
-    }
-
-    config.push_str("    return [];  # No authorized prefixes\n");
+    config.push_str("    # Unknown user\n");
+    config.push_str("    reject;\n");
     config.push_str("}\n");
 
     Ok(config)
@@ -193,17 +188,23 @@ mod tests {
 
         let config = generate_config(&nodes, &mappings).unwrap();
 
-        // Verify ASN mapping function exists
-        assert!(config.contains("function get_user_asn(ip remote_ip)"));
-        assert!(config.contains("if (remote_ip = 100.64.0.1) then return 65001;"));
-        assert!(config.contains("if (remote_ip = 100.64.0.2) then return 65002;"));
+        // Verify unified policy function exists
+        assert!(config.contains("function enforce_user_policy(ip remote_ip)"));
 
-        // Verify prefix set function exists with explicit return type
-        assert!(config.contains("function get_user_prefixes(ip remote_ip) -> prefix set"));
-        assert!(config.contains(
-            "if (remote_ip = 100.64.0.1) then return [ 2001:db8:1::/48, 2001:db8:2::/48 ];"
-        ));
-        assert!(config.contains("if (remote_ip = 100.64.0.2) then return [ 2001:db8:3::/48 ];"));
-        assert!(config.contains("return [];  # No authorized prefixes"));
+        // Verify user 1 policy
+        assert!(config.contains("# User: user1@example.com"));
+        assert!(config.contains("if (remote_ip = 100.64.0.1) then {"));
+        assert!(config.contains("if (bgp_path.last != 65001) then reject;"));
+        assert!(config.contains("if !(net ~ [ 2001:db8:1::/48, 2001:db8:2::/48 ]) then reject;"));
+
+        // Verify user 2 policy
+        assert!(config.contains("# User: user2@example.com"));
+        assert!(config.contains("if (remote_ip = 100.64.0.2) then {"));
+        assert!(config.contains("if (bgp_path.last != 65002) then reject;"));
+        assert!(config.contains("if !(net ~ [ 2001:db8:3::/48 ]) then reject;"));
+
+        // Verify accept and unknown user handling
+        assert!(config.contains("accept;"));
+        assert!(config.contains("# Unknown user"));
     }
 }
