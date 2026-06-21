@@ -81,7 +81,7 @@ pub fn write_config_if_changed(path: &Path, content: &str) -> Result<bool> {
     // Calculate hash of new content
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
-    let new_hash = format!("{:x}", hasher.finalize());
+    let new_hash = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>();
 
     // Read existing file if it exists
     let existing_hash = if path.exists() {
@@ -89,7 +89,7 @@ pub fn write_config_if_changed(path: &Path, content: &str) -> Result<bool> {
             fs::read_to_string(path).context("Failed to read existing configuration file")?;
         let mut hasher = Sha256::new();
         hasher.update(existing_content.as_bytes());
-        format!("{:x}", hasher.finalize())
+        hasher.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()
     } else {
         String::new()
     };
